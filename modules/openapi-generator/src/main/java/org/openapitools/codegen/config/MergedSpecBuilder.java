@@ -12,6 +12,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -25,6 +26,7 @@ import com.google.common.collect.ImmutableMap;
 
 import io.swagger.parser.OpenAPIParser;
 import io.swagger.v3.oas.models.OpenAPI;
+import io.swagger.v3.oas.models.security.SecurityScheme;
 import io.swagger.v3.parser.core.models.ParseOptions;
 
 public class MergedSpecBuilder {
@@ -58,9 +60,7 @@ public class MergedSpecBuilder {
             try {
                 LOGGER.info("Reading spec: {}", specPath);
 
-                OpenAPI result = new OpenAPIParser()
-                    .readLocation(specPath, new ArrayList<>(), options)
-                    .getOpenAPI();
+                OpenAPI result = new OpenAPIParser().readLocation(specPath, new ArrayList<>(), options).getOpenAPI();
 
                 if (openapiVersion == null) {
                     openapiVersion = result.getOpenapi();
@@ -68,7 +68,11 @@ public class MergedSpecBuilder {
                         isJson = true;
                     }
                 }
-                allPaths.add(new SpecWithPaths(specRelatedPath, result.getPaths().keySet()));
+
+                Map<String, SecurityScheme> securitySchemes = Optional.ofNullable(result.getComponents())
+                        .map(components -> components.getSecuritySchemes()).orElseGet(() -> null);
+
+                allPaths.add(new SpecWithPaths(specRelatedPath, result.getPaths().keySet(), securitySchemes));
             } catch (Exception e) {
                 LOGGER.error("Failed to read file: {}. It would be ignored", specPath);
             }
@@ -80,7 +84,8 @@ public class MergedSpecBuilder {
 
         try {
             ObjectMapper objectMapper = isJson ? new ObjectMapper() : new ObjectMapper(new YAMLFactory());
-            Files.write(mergedFilePath, objectMapper.writeValueAsBytes(mergedSpec), StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+            Files.write(mergedFilePath, objectMapper.writeValueAsBytes(mergedSpec), StandardOpenOption.CREATE,
+                    StandardOpenOption.WRITE);
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -93,39 +98,53 @@ public class MergedSpecBuilder {
         Map<String, Object> paths = new HashMap<>();
         spec.put("paths", paths);
 
-        for(SpecWithPaths specWithPaths : allPaths) {
+        // Create a new map to hold the collected security schemes
+        Map<String, SecurityScheme> collectedSecuritySchemes = new HashMap<>();
+
+        for (SpecWithPaths specWithPaths : allPaths) {
             for (String path : specWithPaths.paths) {
                 String specRelatedPath = "./" + specWithPaths.specRelatedPath + "#/paths/" + path.replace("/", "~1");
-                paths.put(path, ImmutableMap.of(
-                    "$ref", specRelatedPath
-                ));
+                paths.put(path, ImmutableMap.of("$ref", specRelatedPath));
+            }
+            if (specWithPaths.securitySchemes != null) {
+                collectedSecuritySchemes.putAll(specWithPaths.securitySchemes);
             }
         }
 
+        if (!collectedSecuritySchemes.isEmpty()) {
+            Map<String, Object> components = new HashMap<>();
+            Map<String, Object> securitySchemes = new HashMap<>();
+
+            for (Map.Entry<String, SecurityScheme> entry : collectedSecuritySchemes.entrySet()) {
+                Map<String, Object> securitySchemeMap = new HashMap<>();
+                SecurityScheme securityScheme = entry.getValue();
+
+                securitySchemeMap.put("type", securityScheme.getType().toString());
+                securitySchemeMap.put("scheme", securityScheme.getScheme());
+                securitySchemes.put(entry.getKey(), securitySchemeMap);
+            }
+
+            components.put("securitySchemes", securitySchemes);
+            spec.put("components", components);
+        }
+
         return spec;
+
     }
 
     private static Map<String, Object> generateHeader(String openapiVersion) {
         Map<String, Object> map = new HashMap<>();
         map.put("openapi", openapiVersion);
-        map.put("info", ImmutableMap.of(
-            "title", "merged spec",
-            "description", "merged spec",
-            "version", "1.0.0"
-        ));
-        map.put("servers", Collections.singleton(
-            ImmutableMap.of("url", "http://localhost:8080")
-        ));
+        map.put("info", ImmutableMap.of("title", "merged spec", "description", "merged spec", "version", "1.0.0"));
+        map.put("servers", Collections.singleton(ImmutableMap.of("url", "http://localhost:8080")));
         return map;
     }
 
     private List<String> getAllSpecFilesInDirectory() {
         Path rootDirectory = new File(inputSpecRootDirectory).toPath();
         try (Stream<Path> pathStream = Files.walk(rootDirectory)) {
-            return pathStream
-                .filter(path -> !Files.isDirectory(path))
-                .map(path -> rootDirectory.relativize(path).toString())
-                .collect(Collectors.toList());
+            return pathStream.filter(path -> !Files.isDirectory(path)).map(path -> rootDirectory.relativize(path).toString())
+                    .collect(Collectors.toList());
         } catch (IOException e) {
             throw new RuntimeException("Exception while listing files in spec root directory: " + inputSpecRootDirectory, e);
         }
@@ -134,19 +153,24 @@ public class MergedSpecBuilder {
     private void deleteMergedFileFromPreviousRun() {
         try {
             Files.deleteIfExists(Paths.get(inputSpecRootDirectory + File.separator + mergeFileName + ".json"));
-        } catch (IOException e) { }
+        } catch (IOException e) {
+        }
         try {
             Files.deleteIfExists(Paths.get(inputSpecRootDirectory + File.separator + mergeFileName + ".yaml"));
-        } catch (IOException e) { }
+        } catch (IOException e) {
+        }
     }
 
     private static class SpecWithPaths {
         private final String specRelatedPath;
         private final Set<String> paths;
+        private final Map<String, SecurityScheme> securitySchemes;
 
-        private SpecWithPaths(final String specRelatedPath, final Set<String> paths) {
+        private SpecWithPaths(final String specRelatedPath, final Set<String> paths,
+                Map<String, SecurityScheme> securitySchemes) {
             this.specRelatedPath = specRelatedPath;
             this.paths = paths;
+            this.securitySchemes = securitySchemes;
         }
     }
 }
