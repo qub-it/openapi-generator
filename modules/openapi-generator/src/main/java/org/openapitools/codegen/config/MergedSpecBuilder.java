@@ -12,6 +12,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
@@ -25,6 +26,7 @@ import com.google.common.collect.ImmutableMap;
 
 import io.swagger.parser.OpenAPIParser;
 import io.swagger.v3.oas.models.OpenAPI;
+import io.swagger.v3.oas.models.security.SecurityScheme;
 import io.swagger.v3.parser.core.models.ParseOptions;
 
 public class MergedSpecBuilder {
@@ -68,7 +70,11 @@ public class MergedSpecBuilder {
                         isJson = true;
                     }
                 }
-                allPaths.add(new SpecWithPaths(specRelatedPath, result.getPaths().keySet()));
+
+                Map<String, SecurityScheme> securitySchemes = Optional.ofNullable(result.getComponents())
+                    .map(components -> components.getSecuritySchemes()).orElseGet(() -> Collections.EMPTY_MAP);
+
+                allPaths.add(new SpecWithPaths(specRelatedPath, result.getPaths().keySet(), securitySchemes));
             } catch (Exception e) {
                 LOGGER.error("Failed to read file: {}. It would be ignored", specPath);
             }
@@ -93,13 +99,34 @@ public class MergedSpecBuilder {
         Map<String, Object> paths = new HashMap<>();
         spec.put("paths", paths);
 
+        // Create a new map to hold the collected security schemes
+        Map<String, SecurityScheme> collectedSecuritySchemes = new HashMap<>();
+
         for(SpecWithPaths specWithPaths : allPaths) {
             for (String path : specWithPaths.paths) {
                 String specRelatedPath = "./" + specWithPaths.specRelatedPath + "#/paths/" + path.replace("/", "~1");
                 paths.put(path, ImmutableMap.of(
                     "$ref", specRelatedPath
                 ));
+                collectedSecuritySchemes.putAll(specWithPaths.securitySchemes);
             }
+        }
+
+        if (!collectedSecuritySchemes.isEmpty()) {
+            Map<String, Object> components = new HashMap<>();
+            Map<String, Object> securitySchemes = new HashMap<>();
+
+            for (Map.Entry<String, SecurityScheme> entry : collectedSecuritySchemes.entrySet()) {
+                Map<String, Object> securitySchemeMap = new HashMap<>();
+                SecurityScheme securityScheme = entry.getValue();
+
+                securitySchemeMap.put("type", securityScheme.getType().toString());
+                securitySchemeMap.put("scheme", securityScheme.getScheme());
+                securitySchemes.put(entry.getKey(), securitySchemeMap);
+            }
+
+            components.put("securitySchemes", securitySchemes);
+            spec.put("components", components);
         }
 
         return spec;
@@ -143,10 +170,12 @@ public class MergedSpecBuilder {
     private static class SpecWithPaths {
         private final String specRelatedPath;
         private final Set<String> paths;
+        private final Map<String, SecurityScheme> securitySchemes;
 
-        private SpecWithPaths(final String specRelatedPath, final Set<String> paths) {
+        private SpecWithPaths(final String specRelatedPath, final Set<String> paths, Map<String, SecurityScheme> securitySchemes) {
             this.specRelatedPath = specRelatedPath;
             this.paths = paths;
+            this.securitySchemes = securitySchemes;
         }
     }
 }
