@@ -10,6 +10,7 @@
         <relativePath>../..</relativePath>
     </parent>
     <artifactId>openapi-generator-maven-plugin</artifactId>
+    <version>7.0.0-FORK</version>
     <name>openapi-generator (maven-plugin)</name>
     <packaging>maven-plugin</packaging>
     <description>maven plugin to build modules from OpenAPI Generator</description>
@@ -56,7 +57,7 @@
         <dependency>
             <groupId>org.openapitools</groupId>
             <artifactId>openapi-generator</artifactId>
-            <version>${project.version}</version>
+            <version>7.0.0</version>
         </dependency>
         <dependency>
             <groupId>junit</groupId>
@@ -131,7 +132,7 @@
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-checkstyle-plugin</artifactId>
                 <configuration>
-                    <configLocation>${project.parent.basedir}${file.separator}google_checkstyle.xml</configLocation>
+			<configLocation>../../google_checkstyle.xml</configLocation>
                 </configuration>
             </plugin>
             <plugin>
@@ -213,4 +214,12 @@
             </build>
         </profile>
     </profiles>
+
+    <distributionManagement>
+        <repository>
+           <id>qubIT-oss</id>
+           <url>https://repository-oss.omnis.cloud/nexus/repository/releases/</url>
+        </repository>
+   </distributionManagement>
+
 </project>
