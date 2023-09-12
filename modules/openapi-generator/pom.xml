@@ -10,6 +10,7 @@
     </parent>
     <modelVersion>4.0.0</modelVersion>
     <artifactId>openapi-generator</artifactId>
+    <version>7.0.0-FORK</version>
     <packaging>jar</packaging>
     <name>openapi-generator (core library)</name>
     <build>
@@ -41,7 +42,7 @@
             </extension>
         </extensions>
         <directory>target</directory>
-        <finalName>${project.artifactId}-${project.version}</finalName>
+        <finalName>${project.artifactId}-7.0.0</finalName>
         <plugins>
             <plugin>
                 <groupId>pl.project13.maven</groupId>
@@ -122,7 +123,7 @@
                         <manifestEntries>
                             <mode>development</mode>
                             <url>${project.url}</url>
-                            <implementation-version>${project.version}</implementation-version>
+                            <implementation-version>7.0.0</implementation-version>
                             <package>org.openapi-tools</package>
                         </manifestEntries>
                     </archive>
@@ -452,4 +453,12 @@
             </snapshots>
         </repository>
     </repositories>
+
+    <distributionManagement>
+        <repository>
+           <id>qubIT-oss</id>
+           <url>https://repository-oss.omnis.cloud/nexus/repository/releases/</url>
+        </repository>
+   </distributionManagement>
+
 </project>
