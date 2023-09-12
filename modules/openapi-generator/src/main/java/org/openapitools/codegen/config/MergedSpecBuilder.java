@@ -1,27 +1,37 @@
 package org.openapitools.codegen.config;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
-import com.google.common.collect.ImmutableMap;
-import io.swagger.parser.OpenAPIParser;
-import io.swagger.v3.oas.models.OpenAPI;
-import io.swagger.v3.oas.models.servers.Server;
-import io.swagger.v3.parser.core.models.ParseOptions;
-import org.apache.commons.lang3.ObjectUtils;
-import org.openapitools.codegen.auth.AuthParser;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
 import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
-import java.util.*;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Locale;
+import java.util.Map;
+import java.util.Optional;
+import java.util.Set;
 import java.util.function.Predicate;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
+
+import org.apache.commons.lang3.ObjectUtils;
+import org.openapitools.codegen.auth.AuthParser;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
+import com.google.common.collect.ImmutableMap;
+
+import io.swagger.parser.OpenAPIParser;
+import io.swagger.v3.oas.models.OpenAPI;
+import io.swagger.v3.oas.models.security.SecurityScheme;
+import io.swagger.v3.oas.models.servers.Server;
+import io.swagger.v3.parser.core.models.ParseOptions;
 
 public class MergedSpecBuilder {
 
@@ -38,8 +48,8 @@ public class MergedSpecBuilder {
         this(rootDirectory, mergeFileName, "merged spec", "merged spec", "1.0.0", null);
     }
 
-    public MergedSpecBuilder(final String rootDirectory, final String mergeFileName,
-                             final String mergedFileInfoName, final String mergedFileInfoDescription, final String mergedFileInfoVersion, final String auth) {
+    public MergedSpecBuilder(final String rootDirectory, final String mergeFileName, final String mergedFileInfoName,
+            final String mergedFileInfoDescription, final String mergedFileInfoVersion, final String auth) {
         this.inputSpecRootDirectory = rootDirectory;
         this.mergeFileName = mergeFileName;
         this.mergedFileInfoName = mergedFileInfoName;
@@ -68,9 +78,7 @@ public class MergedSpecBuilder {
             try {
                 LOGGER.info("Reading spec: {}", specPath);
 
-                OpenAPI result = new OpenAPIParser()
-                        .readLocation(specPath, AuthParser.parse(auth), options)
-                        .getOpenAPI();
+                OpenAPI result = new OpenAPIParser().readLocation(specPath, AuthParser.parse(auth), options).getOpenAPI();
 
                 if (openapiVersion == null) {
                     openapiVersion = result.getOpenapi();
@@ -79,7 +87,11 @@ public class MergedSpecBuilder {
                     }
                 }
                 allServers.addAll(ObjectUtils.defaultIfNull(result.getServers(), Collections.emptyList()));
-                allPaths.add(new SpecWithPaths(specRelatedPath, result.getPaths().keySet()));
+                Map<String, SecurityScheme> securitySchemes =
+                        Optional.ofNullable(result.getComponents()).map(components -> components.getSecuritySchemes())
+                                .orElseGet(() -> Collections.EMPTY_MAP);
+
+                allPaths.add(new SpecWithPaths(specRelatedPath, result.getPaths().keySet(), securitySchemes));
             } catch (Exception e) {
                 LOGGER.error("Failed to read file: {}. It would be ignored", specPath);
             }
@@ -91,7 +103,8 @@ public class MergedSpecBuilder {
 
         try {
             ObjectMapper objectMapper = isJson ? new ObjectMapper() : new ObjectMapper(new YAMLFactory());
-            Files.write(mergedFilePath, objectMapper.writeValueAsBytes(mergedSpec), StandardOpenOption.CREATE, StandardOpenOption.WRITE);
+            Files.write(mergedFilePath, objectMapper.writeValueAsBytes(mergedSpec), StandardOpenOption.CREATE,
+                    StandardOpenOption.WRITE);
         } catch (IOException e) {
             throw new RuntimeException(e);
         }
@@ -99,39 +112,55 @@ public class MergedSpecBuilder {
         return mergedFilePath.toString();
     }
 
-    private Map<String, Object> generatedMergedSpec(String openapiVersion, List<SpecWithPaths> allPaths, List<Server> allServers) {
-        Map<String, Object> spec = generateHeader(openapiVersion, mergedFileInfoName, mergedFileInfoDescription, mergedFileInfoVersion, allServers);
+    private Map<String, Object> generatedMergedSpec(String openapiVersion, List<SpecWithPaths> allPaths,
+            List<Server> allServers) {
+        Map<String, Object> spec =
+                generateHeader(openapiVersion, mergedFileInfoName, mergedFileInfoDescription, mergedFileInfoVersion, allServers);
         Map<String, Object> paths = new HashMap<>();
         spec.put("paths", paths);
+
+        // Create a new map to hold the collected security schemes
+        Map<String, SecurityScheme> collectedSecuritySchemes = new HashMap<>();
 
         for (SpecWithPaths specWithPaths : allPaths) {
             for (String path : specWithPaths.paths) {
                 String specRelatedPath = "./" + specWithPaths.specRelatedPath + "#/paths/" + path.replace("/", "~1");
-                paths.put(path, ImmutableMap.of(
-                        "$ref", specRelatedPath
-                ));
+                paths.put(path, ImmutableMap.of("$ref", specRelatedPath));
+                collectedSecuritySchemes.putAll(specWithPaths.securitySchemes);
             }
+        }
+
+        if (!collectedSecuritySchemes.isEmpty()) {
+            Map<String, Object> components = new HashMap<>();
+            Map<String, Object> securitySchemes = new HashMap<>();
+
+            for (Map.Entry<String, SecurityScheme> entry : collectedSecuritySchemes.entrySet()) {
+                Map<String, Object> securitySchemeMap = new HashMap<>();
+                SecurityScheme securityScheme = entry.getValue();
+
+                securitySchemeMap.put("type", securityScheme.getType().toString());
+                securitySchemeMap.put("scheme", securityScheme.getScheme());
+                securitySchemes.put(entry.getKey(), securitySchemeMap);
+            }
+
+            components.put("securitySchemes", securitySchemes);
+            spec.put("components", components);
         }
 
         return spec;
     }
 
-    private static Map<String, Object> generateHeader(String openapiVersion, String title, String description, String version, List<Server> allServers) {
+    private static Map<String, Object> generateHeader(String openapiVersion, String title, String description, String version,
+            List<Server> allServers) {
         Map<String, Object> map = new HashMap<>();
         map.put("openapi", openapiVersion);
-        map.put("info", ImmutableMap.of(
-                "title", title,
-                "description", description,
-                "version", version
-        ));
+        map.put("info", ImmutableMap.of("title", title, "description", description, "version", version));
 
-        Set<ImmutableMap<String, String>> servers = allServers.stream()
-                .map(Server::getUrl)
-                .distinct()
-                .map(url -> ImmutableMap.of("url", url))
-                .collect(Collectors.collectingAndThen(Collectors.toSet(), Optional::of))
-                .filter(Predicate.not(Set::isEmpty))
-                .orElseGet(() -> Collections.singleton(ImmutableMap.of("url", "http://localhost:8080")));
+        Set<ImmutableMap<String, String>> servers =
+                allServers.stream().map(Server::getUrl).distinct().map(url -> ImmutableMap.of("url", url))
+                        .collect(Collectors.collectingAndThen(Collectors.toSet(), Optional::of))
+                        .filter(Predicate.not(Set::isEmpty))
+                        .orElseGet(() -> Collections.singleton(ImmutableMap.of("url", "http://localhost:8080")));
 
         map.put("servers", servers);
 
@@ -141,9 +170,7 @@ public class MergedSpecBuilder {
     private List<String> getAllSpecFilesInDirectory() {
         Path rootDirectory = new File(inputSpecRootDirectory).toPath();
         try (Stream<Path> pathStream = Files.walk(rootDirectory)) {
-            return pathStream
-                    .filter(path -> !Files.isDirectory(path))
-                    .map(path -> rootDirectory.relativize(path).toString())
+            return pathStream.filter(path -> !Files.isDirectory(path)).map(path -> rootDirectory.relativize(path).toString())
                     .collect(Collectors.toList());
         } catch (IOException e) {
             throw new RuntimeException("Exception while listing files in spec root directory: " + inputSpecRootDirectory, e);
@@ -164,10 +191,13 @@ public class MergedSpecBuilder {
     private static class SpecWithPaths {
         private final String specRelatedPath;
         private final Set<String> paths;
+        private final Map<String, SecurityScheme> securitySchemes;
 
-        private SpecWithPaths(final String specRelatedPath, final Set<String> paths) {
+        private SpecWithPaths(final String specRelatedPath, final Set<String> paths,
+                Map<String, SecurityScheme> securitySchemes) {
             this.specRelatedPath = specRelatedPath;
             this.paths = paths;
+            this.securitySchemes = securitySchemes;
         }
     }
 }
