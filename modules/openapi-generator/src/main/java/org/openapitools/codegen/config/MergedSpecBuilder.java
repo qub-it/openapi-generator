@@ -28,6 +28,8 @@ import com.fasterxml.jackson.dataformat.yaml.YAMLFactory;
 import com.google.common.collect.ImmutableMap;
 
 import io.swagger.parser.OpenAPIParser;
+import io.swagger.v3.core.util.Json;
+import io.swagger.v3.core.util.Yaml;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.security.SecurityScheme;
 import io.swagger.v3.oas.models.servers.Server;
@@ -97,7 +99,7 @@ public class MergedSpecBuilder {
             }
         }
 
-        Map<String, Object> mergedSpec = generatedMergedSpec(openapiVersion, allPaths, allServers);
+        Map<String, Object> mergedSpec = generatedMergedSpec(openapiVersion, allPaths, allServers, isJson);
         String mergedFilename = this.mergeFileName + (isJson ? ".json" : ".yaml");
         Path mergedFilePath = Paths.get(inputSpecRootDirectory, mergedFilename);
 
@@ -112,8 +114,8 @@ public class MergedSpecBuilder {
         return mergedFilePath.toString();
     }
 
-    private Map<String, Object> generatedMergedSpec(String openapiVersion, List<SpecWithPaths> allPaths,
-            List<Server> allServers) {
+    private Map<String, Object> generatedMergedSpec(String openapiVersion, List<SpecWithPaths> allPaths, List<Server> allServers,
+            boolean isJson) {
         Map<String, Object> spec =
                 generateHeader(openapiVersion, mergedFileInfoName, mergedFileInfoDescription, mergedFileInfoVersion, allServers);
         Map<String, Object> paths = new HashMap<>();
@@ -133,13 +135,12 @@ public class MergedSpecBuilder {
         if (!collectedSecuritySchemes.isEmpty()) {
             Map<String, Object> components = new HashMap<>();
             Map<String, Object> securitySchemes = new HashMap<>();
+            ObjectMapper objectMapper = isJson ? Json.mapper() : Yaml.mapper();
 
             for (Map.Entry<String, SecurityScheme> entry : collectedSecuritySchemes.entrySet()) {
-                Map<String, Object> securitySchemeMap = new HashMap<>();
                 SecurityScheme securityScheme = entry.getValue();
-
-                securitySchemeMap.put("type", securityScheme.getType().toString());
-                securitySchemeMap.put("scheme", securityScheme.getScheme());
+                @SuppressWarnings("unchecked") Map<String, Object> securitySchemeMap =
+                        objectMapper.convertValue(securityScheme, Map.class);
                 securitySchemes.put(entry.getKey(), securitySchemeMap);
             }
 
